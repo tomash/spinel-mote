@@ -1,0 +1,16 @@
+ensure 3
+SensorError: sensor fault (true)
+ensure 0
+SensorError: sensor fault (true)
+true ZeroDivisionError kind_of=true
+true IndexError kind_of=true
+true KeyError kind_of=true
+true ArgumentError kind_of=true
+true NoMethodError kind_of=true
+true RuntimeError kind_of=true
+retried to 3
+0 1 2 3 4 caught at 5: KeyError < IndexError = true
+5 6 
+catch 28
+outer cause=TypeError
+done

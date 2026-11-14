@@ -66,7 +66,8 @@ rest of the 20 KB).
 | 4a `SP_NO_SLAB` (on 2) | 27 452 | 43 840 | 11 276 |
 | pin move to upstream `0e124f742` (same flags) | 34 268 | 48 376 | 12 692 |
 | packed builtin class table, id caches sized to the ids | 30 068 | 44 180 | 12 116 |
-| 3 `tiny` preset + 56-byte `jmp_buf` | **28 576** | **41 636** | **3 580** |
+| 3 `tiny` preset + 56-byte `jmp_buf` (image without constructors, see below) | 28 576 | 41 636 | 3 580 |
+| constructors kept and run (correct image), GC stats out under `SP_NO_GC_PHASES` | **32 864** | **44 224** | **4 336** |
 
 ### Pin move to `0e124f742` (2026-11-14)
 
@@ -132,9 +133,62 @@ The 9 failures are the tests that trap a signal other than EXIT
 `SP_SIG_MAX=1` refuses by design. Two link failures in the first run were
 the script's missing `-lcrypt` (fixed; both pass).
 
-Not yet run: `baremetal/setjmp.S` itself. The host run uses glibc's
-setjmp, and no rv32 emulator is installed; its first execution is
-qemu-riscv32 or the board.
+### Running the image: qemu-riscv32 (2026-11-14)
+
+`tools/ch32-qemu.sh` builds `app/qemu/*.rb` exactly as the size check does
+(same archive, preset, flags, tiny stdio, the 56-byte setjmp), links it for
+qemu's Linux user mode (`baremetal/qemu/`: kernel stack, write/exit
+syscalls, malloc's break over a fixed 16 KB array, the heap a CH32V203 has
+left), runs it and compares with CRuby's output. A test can ask for a bigger
+heap with `# qemu-heap-kb: N`.
+
+| test | heap | result |
+|---|---:|---|
+| `exc.rb`: rescue by superclass, retry, nested rescue/re-raise/ensure, catch/throw, cause, builtin class names | 16 KB | pass |
+| `procs.rb`: 3- to 40-argument calls, 20-parameter lambda (heap store), splat, `&:sym`, `Method#to_proc`, keywords | 16 KB | pass |
+| `inspect.rb`: Array/Hash inspect through the runtime hooks | 16 KB | pass |
+| `gc.rb`: 400 rounds of churn, a 60-deep recursion past the 128-entry root stack, 40 runtime symbols, String#length | 48 KB | pass |
+| `spread_wide.rb`: auto-splat of an 18-element Array | 16 KB | fails: upstream bug, below |
+
+What the first runs found, all of which the board would have hit:
+
+- **No constructors ran.** `--gc-sections` dropped `.init_array` (no
+  `KEEP`) and `crt0` called `main` directly. The generated program and the
+  runtime install hooks from constructors (inspect, JSON, the GC's retune
+  hooks), so every `inspect` printed `{}` and the collector never retuned.
+  Both linker scripts now keep the table, and both `crt0`s run it. The chip
+  `crt0` also gained the `.data` copy from flash and the `.bss` clear it
+  never had. **The size rows before this one were measured on images
+  without the constructors**; the correct image costs 2.6 KB of flash and
+  0.75 KB of RAM more.
+- **`errno` wrote address 0.** The ESP toolchain's newlib leaves
+  `__getreent` to ESP-IDF; its weak default returns NULL, and the first
+  failed `fstat` (in `isatty`, at startup) stored through it. The board
+  layer (`tinystdio.c`) returns newlib's static reent.
+- **No collection before 256 KB.** The first trigger was 256 KB of
+  allocation, so a 16 KB heap ran out first. `mcu-trim` adds
+  `SP_GC_THRESHOLD_KB`, `SP_GC_THRESHOLD_CAP_KB` and `SP_GC_STR_MAJOR_KB`;
+  `tiny` sets 2, 4 and 4.
+- **Out of memory crashed.** The `SP_NO_SLAB` stubs had dropped the
+  allocator's NULL check (a `memset` through NULL); fixed in `mcu-trim`.
+- **Soft-float came back** with the retune hook: the `[gc]` stats line's
+  double formatting, which never prints with no environment. It is out
+  under `SP_NO_GC_PHASES`.
+- Two more no-filesystem stubs: `flockfile`/`funlockfile`, `lstat`.
+
+Upstream bug, also on the host: a proc auto-splatting one Array keeps only
+its first 16 elements (`if (_sp_as_n > 16) _sp_as_n = 16` in codegen.c),
+so `proc { |a, b, *rest| }.call((1..18).to_a)` sees 14 in `rest`, not 16.
+
+### Next lever: container footprint on the heap
+
+The heap, not static RAM, is now the limit. Measured under qemu: a
+two-element Array costs ~150 B with its header and malloc overhead; an
+empty Hash allocates 16 slots in five tables (keys, values, hashes, order,
+occupancy), ~800 B before its first key, so 20 small hashes fill the 16 KB
+heap. An initial-capacity knob per container (4 slots instead of 16) is
+the next RAM lever. What is left of static RAM (4.3 KB) is mostly real
+state, plus newlib's reent and std FILEs (550 B).
 
 ### 0. mruby/c baseline (measured)
 

@@ -21,6 +21,7 @@
 #   FLASH_KB=64 RAM_KB=20                    budget
 #   TOP=15                                   rows in the per-object breakdown
 #   EXTRA_SRCS="baremetal/tinystdio.c"       C or .S files linked ahead of newlib (board layer)
+#   CRT0=baremetal/crt0.S LDSCRIPT=baremetal/measure.ld   startup and link (tools/ch32-qemu.sh swaps them)
 #   APP_DEFS="-DSP_NO_SLAB"                  extra flags for the app TU (match the runtime's switches)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -43,7 +44,7 @@ for f in $(sed -n 's/^override COPT += *//p' "$SPINEL_SRC/Makefile" 2>/dev/null)
 DEFS="$DEFS ${APP_DEFS:-}"
 INC="-I$ROOT/shim/esp32/include -I$SPINEL_SRC/lib -I$SPINEL_SRC/lib/regexp"
 
-"$CC" $ARCH -c "$ROOT/baremetal/crt0.S" -o "$OUT/crt0.o"
+"$CC" $ARCH -c "$ROOT/${CRT0:-baremetal/crt0.S}" -o "$OUT/crt0.o"
 EXTRA_OBJS=""
 for src in ${EXTRA_SRCS:-}; do
   b="$(basename "$src")"; o="$OUT/extra-${b%.*}.o"
@@ -57,7 +58,7 @@ for rb in "$@"; do
   "$SPINEL_BIN" "$rb" -S --cc="$CC" $FLAGS > "$OUT/$b.c"
   # shellcheck disable=SC2086
   "$CC" $ARCH ${APP_OPT:--Os} -ffunction-sections -fdata-sections -w $INC $DEFS -c "$OUT/$b.c" -o "$OUT/$b.o"
-  "$CC" $ARCH ${LINK_FLAGS:-} -nostartfiles -specs=nano.specs -T "$ROOT/baremetal/measure.ld" \
+  "$CC" $ARCH ${LINK_FLAGS:-} -nostartfiles -specs=nano.specs -T "$ROOT/${LDSCRIPT:-baremetal/measure.ld}" \
     -Wl,--gc-sections -Wl,-Map="$OUT/$b.map" "$OUT/crt0.o" "$OUT/$b.o" $EXTRA_OBJS \
     "$RT_DIR/libspinel_rt_esp32.a" -lm -lc_nano -lnosys -o "$OUT/$b.elf" >"$OUT/$b.link.log" 2>&1
   read -r text data bss _ < <("$SIZE" "$OUT/$b.elf" | tail -1)

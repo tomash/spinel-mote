@@ -47,3 +47,10 @@ SP_EXC_NAME_CACHE=0
 # Builtin class lookup by name (spinel mcu-trim): scan the rows instead of
 # a 256-byte hash, a lookup is per raise. 256 B.
 SP_CLASS_NAME_HASH=0
+# GC pacing for a ~16 KB heap (spinel mcu-trim): first collection after 2 KB
+# of objects or strings instead of 256 KB, retuned triggers capped at 4 KB,
+# the old string generation's first gate at 4 KB instead of 1 MB. Without
+# these a CH32 program runs out of heap before its first collection.
+SP_GC_THRESHOLD_KB=2
+SP_GC_THRESHOLD_CAP_KB=4
+SP_GC_STR_MAJOR_KB=4

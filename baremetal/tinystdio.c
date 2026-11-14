@@ -186,3 +186,18 @@ off_t ftello(FILE *fp) { (void)fp; errno = ESPIPE; return -1; }
 /* Time parsing (sp_time.c) is the runtime's only sscanf user; without scanf
    it reports no fields matched, and the Ruby call raises ArgumentError. */
 int sscanf(const char *s, const char *f, ...) { (void)s; (void)f; return EOF; }
+
+/* One thread, so the stdio locks are no-ops; no file system, so lstat fails
+   (the runtime's File::Stat paths, dead in an MCU program but linked). */
+struct stat;
+void flockfile(FILE *fp) { (void)fp; }
+void funlockfile(FILE *fp) { (void)fp; }
+int lstat(const char *p, struct stat *st) { (void)p; (void)st; errno = ENOSYS; return -1; }
+
+/* The ESP toolchain's newlib is built with dynamic reentrancy and leaves
+   __getreent to ESP-IDF (FreeRTOS gives each task its own struct _reent);
+   its weak default answers NULL, so the first errno store (a failed fstat
+   in isatty, at startup) writes address 0. One thread here: newlib's own
+   static reent. */
+#include <reent.h>
+struct _reent *__getreent(void) { return _impure_ptr; }
