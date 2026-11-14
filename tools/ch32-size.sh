@@ -20,7 +20,7 @@
 #   LINK_FLAGS="-flto -Os"                   extra link flags (LTO needs the opt level here too)
 #   FLASH_KB=64 RAM_KB=20                    budget
 #   TOP=15                                   rows in the per-object breakdown
-#   EXTRA_SRCS="baremetal/tinystdio.c"        C files linked ahead of newlib (board layer)
+#   EXTRA_SRCS="baremetal/tinystdio.c"       C or .S files linked ahead of newlib (board layer)
 #   APP_DEFS="-DSP_NO_SLAB"                  extra flags for the app TU (match the runtime's switches)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,7 +46,7 @@ INC="-I$ROOT/shim/esp32/include -I$SPINEL_SRC/lib -I$SPINEL_SRC/lib/regexp"
 "$CC" $ARCH -c "$ROOT/baremetal/crt0.S" -o "$OUT/crt0.o"
 EXTRA_OBJS=""
 for src in ${EXTRA_SRCS:-}; do
-  o="$OUT/extra-$(basename "$src" .c).o"
+  b="$(basename "$src")"; o="$OUT/extra-${b%.*}.o"
   # shellcheck disable=SC2086
   "$CC" $ARCH ${APP_OPT:--Os} -ffunction-sections -fdata-sections -fno-builtin -c "$ROOT/$src" -o "$o"
   EXTRA_OBJS="$EXTRA_OBJS $o"

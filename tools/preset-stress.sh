@@ -21,6 +21,10 @@
 #        RT_BASE=...     archive whose non-member objects are reused (default
 #                        $SPINEL_SRC/lib/libspinel_rt.a): for a tree whose own
 #                        build is stale, take both from a build at the same commit
+#        SPINEL_FLAGS=...  compiler switches the preset needs (tiny:
+#                          --proc-arg-slots=16)
+#        EXTRA_TESTS="test/a.rb ..."  ordinary tests (relative to SPINEL_SRC),
+#                          run plain against the same runtime ("plain" mode)
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${SPINEL_SRC:-$ROOT/vendor/spinel}"
@@ -42,11 +46,11 @@ printf '%s\n' $members | xargs -P "$JOBS" -I{} \
 run_one() { # run_one <src.rb> <mode>
   local src="$1" mode="$2" bn; bn="$(basename "$src" .rb)-$mode"
   local d="$WORK/t/$bn"; mkdir -p "$d"
-  if ! "$SPINEL_BIN" "$src" -S > "$d/t.c" 2> "$d/cc.out"; then echo "SKIP $bn (spinel refused)"; return 0; fi
+  if ! "$SPINEL_BIN" "$src" ${SPINEL_FLAGS:-} -S > "$d/t.c" 2> "$d/cc.out"; then echo "SKIP $bn (spinel refused)"; return 0; fi
   # Bundled packages the program requires (`link <pkg>.o` in the driver's
   # build plan): rebuilt from their .c with the preset, as the runtime is.
   local extra="" o plan pdefs
-  plan="$("$SPINEL_BIN" "$src" --print-build 2>/dev/null)"
+  plan="$("$SPINEL_BIN" "$src" ${SPINEL_FLAGS:-} --print-build 2>/dev/null)"
   # The threaded runtime (libspinel_rt_mt.a) is not what an MCU links: a
   # program that needs it is out of scope here, not a failure.
   if grep -q '^define -DSP_THREADS$' <<<"$plan"; then echo "SKIP $bn (needs the threaded runtime)"; return 0; fi
@@ -67,18 +71,21 @@ run_one() { # run_one <src.rb> <mode>
     stress0) envs="SPINEL_GC_STRESS=2 SPINEL_GC_VERIFY=0" ;;
     stress1) envs="SPINEL_GC_STRESS=2 SPINEL_GC_VERIFY=1" ;;
     minor)   envs="SPINEL_GC_MINOR=1 SPINEL_GC_STRESS=1 SPINEL_GC_VERIFY_GEN=1" ;;
+    plain)   envs="" ;;
   esac
-  ( cd "$(dirname "$src")" && env $envs timeout "${STRESS_TIMEOUT:-300}" "$d/t" > "$d/out" 2> "$d/err" ) || rc=$?
+  local in=/dev/null; [[ -f "$src.stdin" ]] && in="$src.stdin"
+  ( cd "$(dirname "$src")" && env $envs timeout "${STRESS_TIMEOUT:-300}" "$d/t" < "$in" > "$d/out" 2> "$d/err" ) || rc=$?
   if [[ $rc -ne 0 ]] || ! cmp -s "$d/out" "$src.expected"; then
     echo "FAIL $bn (exit $rc)"; diff "$src.expected" "$d/out" | head -4; head -3 "$d/err"; return 1
   fi
   echo "PASS $bn"
 }
-export -f run_one; export SRC WORK COPT DEFS SPINEL_BIN
+export -f run_one; export SRC WORK COPT DEFS SPINEL_BIN SPINEL_FLAGS
 
 # ONLY=<regex> restricts the run to matching test names (re-checking failures).
 { for f in $(grep -l '^# spinel: gc-stress$' "$SRC"/test/*.rb); do echo "$f stress0"; echo "$f stress1"; done
   for f in $(grep -l '^# spinel: gc-minor$' "$SRC"/test/*.rb); do echo "$f minor"; done
+  for f in ${EXTRA_TESTS:-}; do echo "$SRC/$f plain"; done
 } | grep -E -- "${ONLY:-.}" | xargs -P "$JOBS" -L1 bash -c 'run_one "$0" "$1"' > "$WORK/results.txt" 2>&1
 pass=$(grep -c '^PASS' "$WORK/results.txt"); fail=$(grep -c '^FAIL' "$WORK/results.txt"); skip=$(grep -c '^SKIP' "$WORK/results.txt")
 grep -A4 '^FAIL' "$WORK/results.txt" | head -60

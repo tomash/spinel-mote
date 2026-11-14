@@ -1,0 +1,49 @@
+# presets/tiny.defs -- presets/small.defs plus RAM knobs for parts with
+# about 20 KB of SRAM (CH32V203C8). Not for ESP32-class boards: every knob
+# here trades speed or headroom for static RAM. Measured with
+# tools/ch32-size.sh; see docs/mcu-levers.md (lever 3).
+#
+# The same values must reach the runtime and the generated TU, which both
+# read this file (tools/build-rt.sh, tools/ch32-size.sh).
+
+# --- presets/small.defs, less SP_GC_STACK_MAX and SP_DYN_SYMS_MAX (below) ---
+SP_NO_ALLOC_REPORT
+SP_FIBER_STACK_CACHE_MAX=2
+SP_ALLOC_STATS=1
+SP_GC_REMEMBERED_MAX=32
+SP_GC_PINNED_MAX=32
+SP_STR_SHAPE_MAX=32
+SP_GC_MARK_STACK_MAX=128
+SP_EXC_STACK_MAX=8
+SP_CATCH_STACK_MAX=4
+SP_MAX_WORKERS=1
+SP_FIBER_STACK_CACHE=2
+
+# --- tiny overrides ---
+# GC root stack: past it roots spill to a heap extension (sp_gc_roots_ext),
+# so this is a speed knob, not a limit. 512 -> 128: 1.5 KB.
+SP_GC_STACK_MAX=128
+# Runtime-minted symbols (String#to_sym): the pool and its index move to the
+# heap past these. 64 -> 16 and 64 -> 8 slots: ~0.6 KB.
+SP_DYN_SYMS_MAX=16
+SP_DSYM_IX_SLOTS=8
+# String#length cache (spinel mcu-trim): 128 -> 8 entries, ~1.4 KB.
+SP_STR_LCACHE_BITS=2
+SP_STR_LCACHE_WAYS=2
+# Frames a raise keeps for --debug backtraces (spinel mcu-trim); there is no
+# backtrace() on bare metal, so they stay empty. 256 -> 4: ~1 KB.
+SP_BT_MAX=4
+# The proc calling convention's boxed side channel (spinel mcu-trim): 64 ->
+# 16 slots, 768 B. Wider calls ride a heap store. Needs the compiler switch
+# too: SPINEL_FLAGS="--no-bigint --proc-arg-slots=16" (the generated TU
+# refuses to build if the two disagree).
+SP_PROC_ARG_SLOTS=16
+# Signal.trap table (spinel mcu-trim): only EXIT (0) on a part with no
+# signals; trapping another raises ArgumentError. 520 B.
+SP_SIG_MAX=1
+# Builtin exception class-name cache (spinel mcu-trim): off, the name comes
+# from the kept-name table instead. 384 B.
+SP_EXC_NAME_CACHE=0
+# Builtin class lookup by name (spinel mcu-trim): scan the rows instead of
+# a 256-byte hash, a lookup is per raise. 256 B.
+SP_CLASS_NAME_HASH=0
