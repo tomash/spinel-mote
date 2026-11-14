@@ -32,9 +32,13 @@ RT_DIR="${RT_DIR:-$ROOT/build/rt-riscv32imac-small-os}"
 PRESET="${SPINEL_PRESET:-small}"
 FLAGS="${SPINEL_FLAGS:---no-bigint}"
 FLASH_KB="${FLASH_KB:-64}" RAM_KB="${RAM_KB:-20}" TOP="${TOP:-15}"
-BIN="$(dirname "$(ls ~/.espressif/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin/riscv32-esp-elf-gcc | tail -1)")"
-CC="$BIN/riscv32-esp-elf-gcc" SIZE="$BIN/riscv32-esp-elf-size"
-ARCH="-march=rv32imac_zicsr_zifencei -mabi=ilp32"
+# CROSS=arm-none-eabi- ARCH_FLAGS="-mcpu=cortex-m3 -mthumb" for the STM32F103
+if [[ -n "${CROSS:-}" ]]; then CC="${CROSS}gcc" SIZE="${CROSS}size"
+else
+  BIN="$(dirname "$(ls ~/.espressif/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin/riscv32-esp-elf-gcc | tail -1)")"
+  CC="$BIN/riscv32-esp-elf-gcc" SIZE="$BIN/riscv32-esp-elf-size"
+fi
+ARCH="${ARCH_FLAGS:--march=rv32imac_zicsr_zifencei -mabi=ilp32}"
 OUT="$ROOT/build/ch32"; mkdir -p "$OUT"
 [[ $# -gt 0 ]] || set -- "$ROOT/app/size/empty.rb" "$ROOT/app/ch32/blink.rb"
 

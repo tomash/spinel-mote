@@ -16,6 +16,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+/* arm-none-eabi newlib defines these as macros; tinystdio defines the functions */
+#undef clearerr
+#undef ferror
+#undef feof
+#undef fileno
+#undef getc
+#undef putc
+#undef putchar
 #include <string.h>
 
 __attribute__((weak)) void board_putchar(int c) { (void)c; }

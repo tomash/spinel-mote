@@ -47,12 +47,15 @@ case "$TARGET" in
   esp32)   GCC_NAME="xtensa-esp32-elf-gcc" ;;
   # ESP32-S3: Xtensa LX7, its own chip-specific driver (same reason as esp32).
   esp32s3) GCC_NAME="xtensa-esp32s3-elf-gcc" ;;
-  *) echo "error: unknown target '$TARGET' (riscv32|riscv32imac|esp32|esp32s3)" >&2; exit 1 ;;
+  # STM32F103 (blue pill) and other Cortex-M3 parts: the distribution's
+  # arm-none-eabi toolchain (gcc-arm-none-eabi + libnewlib-arm-none-eabi).
+  cortex-m3) GCC_NAME="arm-none-eabi-gcc" ;;
+  *) echo "error: unknown target '$TARGET' (riscv32|riscv32imac|esp32|esp32s3|cortex-m3)" >&2; exit 1 ;;
 esac
 AR_NAME="${GCC_NAME%gcc}ar"   # riscv32-esp-elf-ar / xtensa-esp-elf-ar
 
 # ---- toolchain discovery -------------------------------------------------
-if [[ ! -d "$IDF" ]]; then
+if [[ "$TARGET" != cortex-m3 && ! -d "$IDF" ]]; then
   echo "error: ESP-IDF not found at $IDF (set ESP_IDF=...)" >&2
   exit 1
 fi
@@ -69,6 +72,9 @@ for g in $(find "$HOME/.espressif" -maxdepth 6 -type f -name "$GCC_NAME" 2>/dev/
   [[ -x "$CROSS/bin/$AR_NAME" ]] && break
   CROSS=""
 done
+if [[ -z "$CROSS" ]] && command -v "$GCC_NAME" >/dev/null && command -v "$AR_NAME" >/dev/null; then
+  CROSS="$(dirname "$(dirname "$(command -v "$GCC_NAME")")")"   # a toolchain on PATH (/usr/bin)
+fi
 if [[ -z "$CROSS" || ! -x "$CROSS/bin/$GCC_NAME" ]]; then
   echo "error: $GCC_NAME not found under ~/.espressif" >&2
   exit 1
@@ -156,6 +162,8 @@ fi
 ARCH_FLAGS=""
 if [[ "$TARGET" == "riscv32" ]]; then
   ARCH_FLAGS="-march=rv32imc_zicsr_zifencei -mabi=ilp32"
+elif [[ "$TARGET" == "cortex-m3" ]]; then
+  ARCH_FLAGS="-mcpu=cortex-m3 -mthumb -mfloat-abi=soft"
 elif [[ "$TARGET" == "riscv32imac" ]]; then
   ARCH_FLAGS="-march=rv32imac_zicsr_zifencei -mabi=ilp32"
 elif [[ "$TARGET" == "esp32" || "$TARGET" == "esp32s3" ]]; then
@@ -214,6 +222,7 @@ compile "$SHIM/src/sp_esp32_stub.c" "$OUT/sp_esp32_stub.o"
 # archive stays linkable for apps without Fiber.
 UCFILE="$SHIM/src/ucontext.S"
 [[ "$TARGET" == "esp32" || "$TARGET" == "esp32s3" ]] && UCFILE="$SHIM/src/ucontext_xtensa.S"
+[[ "$TARGET" == "cortex-m3" ]] && UCFILE="$SHIM/src/ucontext_armv7m.S"
 if [[ -f "$UCFILE" ]]; then
   "$CC" $CFLAGS_RT -x assembler-with-cpp -c "$UCFILE" -o "$OUT/ucontext.o"
 else
