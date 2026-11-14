@@ -65,7 +65,7 @@ run_one() { # run_one <src.rb> <mode>
   done
   # shellcheck disable=SC2086
   if ! cc $COPT $DEFS $pdefs -w -I"$SRC/lib" -I"$SRC/lib/regexp" "$d/t.c" $extra "$WORK/rt/libspinel_rt.a" \
-       -lm -lpthread -o "$d/t" 2> "$d/link.err"; then echo "FAIL $bn (link)"; head -3 "$d/link.err"; return 1; fi
+       -lm -lpthread -lcrypt -o "$d/t" 2> "$d/link.err"; then echo "FAIL $bn (link)"; head -3 "$d/link.err"; return 1; fi
   local envs rc=0
   case "$mode" in
     stress0) envs="SPINEL_GC_STRESS=2 SPINEL_GC_VERIFY=0" ;;

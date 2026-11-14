@@ -34,9 +34,10 @@ time, kept if it pays and does not change behaviour the program can see.
    runtime's few `fprintf`/`snprintf` uses with a small integer-only
    formatter writing to a board `putchar`, mruby/c-style. In this repo
    (link-time), no spinel change.
-3. **RAM preset `tiny`.** Exception stack 8 → 4, then the fixed buffers
-   that have no knob yet (backtrace 256 frames, string-length cache 128
-   entries) as small upstream knobs.
+3. **RAM preset `tiny`.** A 56-byte `jmp_buf` in the board layer, then
+   knobs for the fixed buffers that had none (backtrace frames,
+   string-length cache, proc argument slots, signal table, two caches in
+   `sp_exc`) and small values for the existing ones. Done, see Results.
 4. **Allocator and collector.** First measure `--gc=none` (ceiling of what
    a simpler collector could save), then the slab: is there a malloc-backed
    path, and what does a plain mark-sweep over one pool cost. Biggest
@@ -64,7 +65,8 @@ rest of the 20 KB).
 | 1b LTO again (on 2) | 48 256 | 59 328 | 12 008 |
 | 4a `SP_NO_SLAB` (on 2) | 27 452 | 43 840 | 11 276 |
 | pin move to upstream `0e124f742` (same flags) | 34 268 | 48 376 | 12 692 |
-| packed builtin class table, id caches sized to the ids | **30 068** | **44 180** | **12 116** |
+| packed builtin class table, id caches sized to the ids | 30 068 | 44 180 | 12 116 |
+| 3 `tiny` preset + 56-byte `jmp_buf` | **28 576** | **41 636** | **3 580** |
 
 ### Pin move to `0e124f742` (2026-11-14)
 
@@ -81,6 +83,58 @@ arrays with a 4-byte `{offset, id}` row (still no load-time relocation),
 and indexes the caches by `-id - 100` over the 96 ids in use. 4.2 KB of
 flash and 576 B of RAM; 157 exception and class tests pass on the host.
 Not MCU-specific, so it is a candidate upstream PR.
+
+### 3. RAM: the `tiny` preset (2026-11-14)
+
+blink.rb's static RAM goes from 12 116 B to 3 580 B, which leaves 16.5 KB of
+the 20 KB for stack and GC heap (empty.rb: 2 612 B). Flash drops by 2.5 KB
+too, mostly the code that served the removed tables.
+
+```
+SPINEL_SRC=~/spinel-size-floor   # branch mcu-trim
+RT_OPT="-Os -msave-restore" \
+RT_DEFS="-I$PWD/baremetal/include -include $PWD/baremetal/noenv.h -DSP_NO_GC_PHASES -DSP_NO_SLAB" \
+  SPINEL_PRESET=tiny RT_SUFFIX=-tiny tools/build-rt.sh riscv32imac
+SPINEL_PRESET=tiny SPINEL_FLAGS="--no-bigint --proc-arg-slots=16" RT_DIR=build/rt-riscv32imac-tiny \
+APP_OPT="-Os -msave-restore" APP_DEFS="-I$PWD/baremetal/include -DSP_NO_SLAB -DSP_NO_GC_PHASES" \
+EXTRA_SRCS="baremetal/tinystdio.c baremetal/setjmp.S" LINK_FLAGS="-Wl,-z,muldefs" tools/ch32-size.sh
+```
+
+| what | where | blink RAM saved |
+|---|---|---:|
+| `jmp_buf` 304 → 56 B (newlib reserves 12 doubles on any riscv core; 8 kept in `sp_exc_stack`) | `baremetal/include/setjmp.h`, `setjmp.S` | 1 984 |
+| String#length cache 128 → 8 entries (`SP_STR_LCACHE_BITS/WAYS`) | mcu-trim knob | 1 440 |
+| GC root stack 512 → 128 (spills to the heap past it) | existing knob | 1 536 |
+| backtrace frames 256 → 4 (`SP_BT_MAX`; no `backtrace()` on bare metal) | mcu-trim knob | 1 008 |
+| proc side channel 64 → 16 slots (`--proc-arg-slots`, wider calls use the heap store) | mcu-trim compiler switch + knob | 768 |
+| runtime symbol pool 64 → 16 and its index 64 → 8 slots (`SP_DSYM_IX_SLOTS`) | existing knob + mcu-trim | ~640 |
+| `Signal.trap` tables 65 → 1 (`SP_SIG_MAX`; only the EXIT trap) | mcu-trim knob | 520 |
+| builtin exception class-name cache off (`SP_EXC_NAME_CACHE=0`) | mcu-trim knob | 384 |
+| class lookup by name scans instead of hashing (`SP_CLASS_NAME_HASH=0`) | mcu-trim knob | 256 |
+
+All defaults are unchanged; only `presets/tiny.defs` turns them on. What is
+left (about 3.5 KB) is real state: the GC root stack (512), exception
+frames (448), the root fiber (320), the proc side channel (256), the
+exception parent table (192), the GC remembered and pinned sets (256),
+the main-stack contexts (144).
+
+Behaviour that changes under `tiny`: `Signal.trap` of anything but EXIT
+raises ArgumentError; `--debug` backtraces are empty (they are on bare
+metal anyway).
+
+Verification (host, 2026-11-14): `tools/preset-stress.sh tiny` with
+`EXTRA_DEFS="-DSP_NO_SLAB -DSP_NO_GC_PHASES"`, `SPINEL_FLAGS=--proc-arg-slots=16`
+and 258 extra tests run plain (procs with many or splatted arguments,
+`to_sym`, exception classes and backtraces, `Signal.trap`): **1 005 pass,
+9 fail, 75 skip**. The whole GC torture corpus passes in all three modes.
+The 9 failures are the tests that trap a signal other than EXIT
+(`signal_*`, `trap_*`, `bundle_io_sys`, `io_buffer_loop_cache`), which
+`SP_SIG_MAX=1` refuses by design. Two link failures in the first run were
+the script's missing `-lcrypt` (fixed; both pass).
+
+Not yet run: `baremetal/setjmp.S` itself. The host run uses glibc's
+setjmp, and no rv32 emulator is installed; its first execution is
+qemu-riscv32 or the board.
 
 ### 0. mruby/c baseline (measured)
 
